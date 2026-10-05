@@ -1,0 +1,30 @@
+dataset:
+  root: "f:/datasets plagarism/pan-plagiarism-corpus-2011"
+  external_root: "f:/datasets plagarism/pan-plagiarism-corpus-2011/external-detection-corpus"
+  processed_dir: "data/processed"
+  reports_dir: "outputs/reports"
+  indexes_dir: "data/indexes"
+
+chunking:
+  words_per_chunk: 512
+  overlap_words: 100
+
+bm25:
+  top_k: 100
+
+dense:
+  model: "sentence-transformers/all-MiniLM-L6-v2"
+  top_k: 100
+  batch_size: 256
+
+fusion:
+  method: "rrf"
+  k: 60
+
+evaluation:
+  metrics:
+    - recall@1
+    - recall@5
+    - recall@10
+    - recall@20
+    - mrr

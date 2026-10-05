@@ -1,0 +1,61 @@
+{
+  "timestamp": "2026-10-04 19:14:48",
+  "config": {
+    "dataset": {
+      "root": "f:/datasets plagarism/pan-plagiarism-corpus-2011",
+      "external_root": "f:/datasets plagarism/pan-plagiarism-corpus-2011/external-detection-corpus",
+      "processed_dir": "data/processed",
+      "reports_dir": "outputs/reports",
+      "indexes_dir": "data/indexes"
+    },
+    "chunking": {
+      "words_per_chunk": 512,
+      "overlap_words": 100
+    },
+    "bm25": {
+      "top_k": 100
+    },
+    "dense": {
+      "model": "sentence-transformers/all-MiniLM-L6-v2",
+      "top_k": 100,
+      "batch_size": 256
+    },
+    "fusion": {
+      "method": "rrf",
+      "k": 60
+    },
+    "evaluation": {
+      "metrics": [
+        "recall@1",
+        "recall@5",
+        "recall@10",
+        "recall@20",
+        "mrr"
+      ]
+    }
+  },
+  "queries_count": 100,
+  "results": {
+    "bm25": {
+      "recall@1": 0.99,
+      "recall@5": 1.0,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.995
+    },
+    "dense": {
+      "recall@1": 0.0,
+      "recall@5": 0.0,
+      "recall@10": 0.0,
+      "recall@20": 0.0,
+      "mrr": 0.0
+    },
+    "fusion": {
+      "recall@1": 0.07,
+      "recall@5": 0.96,
+      "recall@10": 1.0,
+      "recall@20": 1.0,
+      "mrr": 0.3852738095238095
+    }
+  }
+}

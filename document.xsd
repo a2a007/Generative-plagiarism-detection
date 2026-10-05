@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+
+	<xsd:element name="document" type="document" />
+
+	<xsd:complexType name="document">
+		<xsd:sequence>
+			<xsd:element name="feature" type="feature" minOccurs="0" maxOccurs="unbounded" />
+		</xsd:sequence>
+		<xsd:attribute name="reference" type="xsd:anyURI" use="required"/>
+	</xsd:complexType>
+
+	<xsd:complexType name="feature">
+	  <xsd:attribute name="name" type="xsd:string" use="required"/>
+		<xsd:anyAttribute namespace="##any" processContents="skip" />
+	</xsd:complexType>
+
+</xsd:schema>
+
