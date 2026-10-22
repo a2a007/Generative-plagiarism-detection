@@ -10,9 +10,10 @@ class TestMultiSourceDetection(unittest.TestCase):
         cls.detector = PassagePlagiarismDetector(
             config=cls.config,
             confidence_threshold=0.50,
-            window_words=120,
-            overlap_words=40,
-            min_words=15
+            window_words=100,
+            overlap_words=30,
+            min_words=5,
+            split_paragraphs=True
         )
         cls.fixtures_dir = Path("data/test_documents")
 
@@ -98,6 +99,7 @@ class TestMultiSourceDetection(unittest.TestCase):
 
     def test_07_input_and_source_offset_accuracy(self):
         """Test Scenario 7: Input and source offset verification against actual files"""
+        import re
         file_path = self.fixtures_dir / "multi_source_plagiarism_test.txt"
         with open(file_path, "r", encoding="utf-8") as f:
             input_text = f.read()
@@ -116,17 +118,25 @@ class TestMultiSourceDetection(unittest.TestCase):
         ext_root = Path(self.config["dataset"]["external_root"])
         for src in report["confirmed_detected_sources"]:
             src_doc_name = src["source_document"]
-            # Locate file on disk
             found_paths = list(ext_root.rglob(src_doc_name))
             if found_paths:
-                with open(found_paths[0], "r", encoding="utf-8", errors="ignore") as f:
+                with open(found_paths[0], "r", encoding="latin1") as f:
                     orig_src_text = f.read()
-                for src_span in src["merged_source_offsets"]:
-                    s, e = src_span
-                    self.assertGreaterEqual(s, 0)
-                    self.assertLessEqual(e, len(orig_src_text))
-                    slice_text = orig_src_text[s:e]
-                    self.assertGreater(len(slice_text), 0)
+                
+                # Check that source slices correspond to the input passage with conservative whitespace normalization
+                for inp_span, src_span in zip(src["merged_input_offsets"], src["merged_source_offsets"]):
+                    in_slice = input_text[inp_span[0]:inp_span[1]]
+                    src_slice = orig_src_text[src_span[0]:src_span[1]]
+                    
+                    in_words = set(re.findall(r'\b\w+\b', in_slice.lower()))
+                    src_words = set(re.findall(r'\b\w+\b', src_slice.lower()))
+                    
+                    overlap = len(in_words.intersection(src_words))
+                    union = len(in_words.union(src_words))
+                    jaccard = overlap / union if union > 0 else 0.0
+                    
+                    self.assertGreater(len(src_slice), 0)
+                    self.assertGreater(jaccard, 0.70, f"Source offset text does not match input passage: jaccard={jaccard}")
 
     def test_08_empty_short_and_punctuation_edge_cases(self):
         """Test Scenario 8: Robustness on empty, short, and punctuation edge cases"""
@@ -142,6 +152,31 @@ class TestMultiSourceDetection(unittest.TestCase):
         # Very short text (single word)
         rep_short = self.detector.detect_document("Plagiarism", doc_name="short")
         self.assertEqual(rep_short["detected_sources_count"], 0)
+
+    def test_09_window_counting_and_merged_regions(self):
+        """Test Scenario 9: Separate reporting of evaluated windows, confirmed detections, and merged regions"""
+        file_path = self.fixtures_dir / "multi_source_plagiarism_test.txt"
+        with open(file_path, "r", encoding="utf-8") as f:
+            text = f.read()
+
+        report = self.detector.detect_document(text, doc_name=file_path.name)
+        
+        self.assertIn("total_evaluated_windows", report)
+        self.assertIn("confirmed_passage_detections", report)
+        self.assertIn("merged_input_regions_count", report)
+        self.assertIn("unique_source_documents_count", report)
+
+        self.assertGreaterEqual(report["total_evaluated_windows"], 3)
+        self.assertGreaterEqual(report["confirmed_passage_detections"], 2)
+        self.assertGreaterEqual(report["merged_input_regions_count"], 2)
+        self.assertEqual(report["unique_source_documents_count"], 2)
+
+        for src in report["confirmed_detected_sources"]:
+            self.assertIn("evaluated_windows_count", src)
+            self.assertIn("confirmed_passage_detections", src)
+            self.assertIn("merged_input_regions_count", src)
+            self.assertGreaterEqual(src["confirmed_passage_detections"], 1)
+            self.assertGreaterEqual(src["merged_input_regions_count"], 1)
 
 if __name__ == "__main__":
     unittest.main()

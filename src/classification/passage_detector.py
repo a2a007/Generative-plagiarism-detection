@@ -67,9 +67,49 @@ def extract_best_matching_snippet(query_text: str, candidate_text: str, max_char
     return f"{prefix}{snippet}{suffix}", best_start, best_end
 
 
-def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+def align_passage_to_candidate(query_text: str, candidate_text: str) -> Tuple[int, int, str, bool]:
+    """
+    Finds the exact matching character span [rel_start, rel_end] of query_text inside candidate_text.
+    Uses n-gram token matching (from 5-grams down to 2-grams) to identify the true extent of the match
+    without artificial length capping, returning the aligned relative offsets, formatted snippet, and alignment status.
+    """
+    if not candidate_text:
+        return 0, 0, "", False
+    q_matches = list(re.finditer(r'\b\w+\b', query_text))
+    q_words = [m.group().lower() for m in q_matches]
+    c_matches = list(re.finditer(r'\b\w+\b', candidate_text))
+    c_words = [m.group().lower() for m in c_matches]
+
+    if not q_words or not c_words:
+        snippet = candidate_text[:300].strip()
+        suffix = "..." if len(candidate_text) > 300 else ""
+        return 0, min(len(candidate_text), 400), f"{snippet}{suffix}", False
+
+    for n in (5, 4, 3, 2):
+        if len(q_words) >= n:
+            q_ngrams = set(tuple(q_words[i:i+n]) for i in range(len(q_words) - n + 1))
+            matching_indices = [j for j in range(len(c_words) - n + 1) if tuple(c_words[j:j+n]) in q_ngrams]
+            if matching_indices:
+                first_c = min(matching_indices)
+                last_c = max(matching_indices) + n - 1
+                rel_start = c_matches[first_c].start()
+                rel_end = c_matches[last_c].end()
+                snippet = candidate_text[rel_start:rel_end].strip()
+                prefix = "..." if rel_start > 0 else ""
+                suffix = "..." if rel_end < len(candidate_text) else ""
+                disp = snippet if len(snippet) <= 300 else snippet[:300] + "..."
+                return rel_start, rel_end, f"{prefix}{disp}{suffix}", True
+
+    # Fallback to sentence coverage
+    disp, s, e = extract_best_matching_snippet(query_text, candidate_text, max_chars=400)
+    return s, e, disp, False
+
+
+def merge_intervals(intervals: List[Tuple[int, int]], max_gap: int = 5) -> List[Tuple[int, int]]:
     """
     Merges overlapping or touching (start, end) intervals into disjoint continuous spans.
+    max_gap controls the maximum whitespace/newline gap between adjacent matching spans
+    that should be merged into a single continuous region.
     """
     if not intervals:
         return []
@@ -78,7 +118,7 @@ def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     for current in sorted_intervals[1:]:
         prev_start, prev_end = merged[-1]
         curr_start, curr_end = current
-        if curr_start <= prev_end:
+        if curr_start <= prev_end + max_gap:
             merged[-1] = (prev_start, max(prev_end, curr_end))
         else:
             merged.append(current)
@@ -96,9 +136,10 @@ class PassagePlagiarismDetector:
         config: Dict[str, Any],
         model_pickle_path: str = "outputs/trained_plagiarism_classifier.pkl",
         confidence_threshold: float = 0.50,
-        window_words: int = 150,
-        overlap_words: int = 50,
-        min_words: int = 15
+        window_words: int = 100,
+        overlap_words: int = 30,
+        min_words: int = 5,
+        split_paragraphs: bool = True
     ):
         self.config = config
         self.confidence_threshold = confidence_threshold
@@ -109,7 +150,8 @@ class PassagePlagiarismDetector:
         self.segmenter = PassageSegmenter(
             window_words=window_words,
             overlap_words=overlap_words,
-            min_words=min_words
+            min_words=min_words,
+            split_paragraphs=split_paragraphs
         )
 
         self._load_retrievers()
@@ -269,10 +311,12 @@ class PassagePlagiarismDetector:
             feat_unscaled, meta = self.extract_features_for_pair(q_text, cand, query_emb=q_emb)
             feat_scaled = self.scaler.transform([feat_unscaled])
 
-            # Prediction
+            # Prediction with explicit positive class selection
             if hasattr(self.classifier, "predict_proba"):
                 probs = self.classifier.predict_proba(feat_scaled)[0]
-                prob = float(probs[1]) if len(probs) > 1 else float(probs[0])
+                classes = getattr(self.classifier, "classes_", [0, 1])
+                pos_idx = list(classes).index(1) if 1 in classes else (1 if len(classes) > 1 else 0)
+                prob = float(probs[pos_idx])
             else:
                 prob = float(self.classifier.predict(feat_scaled)[0])
 
@@ -285,7 +329,7 @@ class PassagePlagiarismDetector:
             is_match = (prob >= self.confidence_threshold) and has_textual_evidence
 
             # Align snippet and calculate exact offsets
-            aligned_snippet, rel_start, rel_end = extract_best_matching_snippet(q_text, cand_text)
+            rel_start, rel_end, aligned_snippet, exact_aligned = align_passage_to_candidate(q_text, cand_text)
             exact_source_start = chunk_start + rel_start
             exact_source_end = chunk_start + rel_end
 
@@ -296,7 +340,10 @@ class PassagePlagiarismDetector:
                 "source_document": src_doc,
                 "plagiarism_decision": "PLAGIARISM_MATCH" if is_match else "NO_MATCH",
                 "confidence_score": round(prob, 4),
+                "exact_alignment_verified": exact_aligned,
                 "fused_rank": cand.get("rank"),
+                "bm25_rank": meta["bm25_rank"],
+                "dense_rank": meta["dense_rank"],
                 "matched_chunk_id": cand.get("best_chunk_id"),
                 "source_passage_offsets": [exact_source_start, exact_source_end],
                 "bm25_score": round(meta["bm25_score"], 4),
@@ -315,7 +362,11 @@ class PassagePlagiarismDetector:
                     "scaled": [float(round(x, 4)) for x in feat_scaled[0]],
                     "feature_names": [str(f) for f in self.feature_names],
                     "model_type": str(type(self.classifier)),
-                    "classes": [int(x) for x in getattr(self.classifier, "classes_", [0, 1])]
+                    "classes": [int(x) for x in getattr(self.classifier, "classes_", [0, 1])],
+                    "bm25_rank": meta["bm25_rank"],
+                    "dense_rank": meta["dense_rank"],
+                    "fused_rank": cand.get("rank"),
+                    "has_textual_evidence": bool(has_textual_evidence)
                 }
 
             passage_evaluations.append(eval_record)
@@ -378,21 +429,28 @@ class PassagePlagiarismDetector:
 
         # Multi-source aggregation
         detected_sources = []
+        all_confirmed_input_intervals = []
+
         for src_doc, hits in positive_detections_by_source.items():
             max_conf = max(h["confidence_score"] for h in hits)
             peak_hit = max(hits, key=lambda h: h["confidence_score"])
 
             input_intervals = [tuple(h["input_passage_offsets"]) for h in hits]
             source_intervals = [tuple(h["source_passage_offsets"]) for h in hits]
+            all_confirmed_input_intervals.extend(input_intervals)
 
-            merged_input_spans = merge_intervals(input_intervals)
-            merged_source_spans = merge_intervals(source_intervals)
+            merged_input_spans = merge_intervals(input_intervals, max_gap=5)
+            merged_source_spans = merge_intervals(source_intervals, max_gap=5)
 
             detected_sources.append({
                 "source_document": src_doc,
                 "source_level_decision": "PLAGIARISM_MATCH",
                 "highest_passage_confidence": max_conf,
+                "evaluated_windows_count": len(passages),
+                "confirmed_passage_detections": len(hits),
+                "merged_input_regions_count": len(merged_input_spans),
                 "detected_passages_count": len(hits),
+                "exact_alignment_verified": any(h.get("exact_alignment_verified", False) for h in hits),
                 "merged_input_offsets": [[s, e] for s, e in merged_input_spans],
                 "merged_source_offsets": [[s, e] for s, e in merged_source_spans],
                 "best_bm25_score": max(h["bm25_score"] for h in hits),
@@ -404,6 +462,8 @@ class PassagePlagiarismDetector:
 
         # Sort detected sources descending by confidence
         detected_sources.sort(key=lambda s: s["highest_passage_confidence"], reverse=True)
+
+        overall_merged_input_regions = merge_intervals(all_confirmed_input_intervals, max_gap=5)
 
         # Also compile non-matching candidate sources
         non_matching_sources = []
@@ -423,14 +483,20 @@ class PassagePlagiarismDetector:
         non_matching_sources.sort(key=lambda s: s["highest_passage_confidence"], reverse=True)
 
         has_plagiarism = len(detected_sources) > 0
+        total_confirmed_windows = sum(len(hits) for hits in positive_detections_by_source.values())
 
         report = {
             "input_document_name": doc_name,
             "input_text_length_chars": total_chars,
             "input_text_word_count": total_words,
+            "total_evaluated_windows": len(passages),
+            "confirmed_passage_detections": total_confirmed_windows,
+            "merged_input_regions_count": len(overall_merged_input_regions),
+            "unique_source_documents_count": len(detected_sources),
+            "overall_merged_input_offsets": [[s, e] for s, e in overall_merged_input_regions],
             "total_passages_evaluated": len(passages),
-            "overall_verdict": f"PLAGIARISM DETECTED ({len(detected_sources)} source{'s' if len(detected_sources) != 1 else ''})" if has_plagiarism else "NO SIGNIFICANT PLAGIARISM DETECTED",
             "detected_sources_count": len(detected_sources),
+            "overall_verdict": f"PLAGIARISM DETECTED ({len(detected_sources)} source{'s' if len(detected_sources) != 1 else ''})" if has_plagiarism else "NO SIGNIFICANT PLAGIARISM DETECTED",
             "confirmed_detected_sources": detected_sources,
             "retrieved_non_matching_sources": non_matching_sources,
             "passage_evaluations_count": len(all_passage_evals),

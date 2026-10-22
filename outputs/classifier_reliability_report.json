@@ -1,0 +1,70 @@
+{
+  "model_architecture": "<class 'sklearn.ensemble._forest.RandomForestClassifier'>",
+  "class_label_mapping": {
+    "classes": [
+      0,
+      1
+    ],
+    "positive_class": 1,
+    "negative_class": 0,
+    "valid": true
+  },
+  "feature_order_verification": {
+    "expected_features": [
+      "bm25_score",
+      "dense_score",
+      "rrf_score",
+      "bm25_reciprocal_rank",
+      "dense_reciprocal_rank",
+      "fused_reciprocal_rank",
+      "word_jaccard",
+      "bigram_jaccard",
+      "trigram_jaccard",
+      "char_len_ratio"
+    ],
+    "model_features": [
+      "bm25_score",
+      "dense_score",
+      "rrf_score",
+      "bm25_reciprocal_rank",
+      "dense_reciprocal_rank",
+      "fused_reciprocal_rank",
+      "word_jaccard",
+      "bigram_jaccard",
+      "trigram_jaccard",
+      "char_len_ratio"
+    ],
+    "features_match": true,
+    "scaler_features_dim": 10
+  },
+  "held_out_evaluation": {
+    "total_held_out_candidate_pairs": 400,
+    "positive_samples": 20,
+    "negative_samples": 380,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_binary": 1.0,
+    "f1_macro": 1.0,
+    "roc_auc": 1.0,
+    "brier_score": 0.0007
+  },
+  "calibration_evaluation": {
+    "brier_score": 0.0007,
+    "calibration_bins": [
+      {
+        "mean_predicted_prob": 0.0015,
+        "fraction_positives": 0.0
+      },
+      {
+        "mean_predicted_prob": 0.47,
+        "fraction_positives": 0.0
+      },
+      {
+        "mean_predicted_prob": 0.992,
+        "fraction_positives": 1.0
+      }
+    ],
+    "calibration_note": "Random Forest predict_proba represents the fraction of voting decision trees (uncalibrated probability). Attribution decisions are calibrated by combining the 0.50 decision threshold with textual n-gram evidence verification."
+  }
+}

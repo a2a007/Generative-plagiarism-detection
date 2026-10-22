@@ -42,7 +42,7 @@ class TestPassageSegmenter(unittest.TestCase):
     def test_window_overlap(self):
         words = [f"word_{i}" for i in range(100)]
         text = " ".join(words)
-        segmenter = PassageSegmenter(window_words=30, overlap_words=10, min_words=5)
+        segmenter = PassageSegmenter(window_words=30, overlap_words=10, min_words=5, split_paragraphs=False)
         passages = segmenter.segment_text(text)
         
         # In a step of 20 (30 - 10), passage 1 has 0..30, passage 2 has 20..50
@@ -50,6 +50,32 @@ class TestPassageSegmenter(unittest.TestCase):
         p2_words = passages[1]["text"].split()
         overlap = set(p1_words).intersection(set(p2_words))
         self.assertEqual(len(overlap), 10)
+
+    def test_paragraph_aware_segmentation(self):
+        para1 = "This is the first independent paragraph with exactly nine words."
+        para2 = "And this is the second independent paragraph with eight words."
+        full_doc = para1 + "\n\n" + para2
+        segmenter = PassageSegmenter(window_words=100, overlap_words=30, min_words=5, split_paragraphs=True)
+        passages = segmenter.segment_text(full_doc)
+
+        self.assertEqual(len(passages), 2)
+        self.assertEqual(passages[0]["text"], para1)
+        self.assertEqual(passages[1]["text"], para2)
+        self.assertEqual(full_doc[passages[0]["start_char"]:passages[0]["end_char"]], para1)
+        self.assertEqual(full_doc[passages[1]["start_char"]:passages[1]["end_char"]], para2)
+
+    def test_crlf_paragraph_aware_segmentation(self):
+        para1 = "This is the first CRLF paragraph with some words."
+        para2 = "And this is the second CRLF paragraph with different words."
+        full_doc = para1 + "\r\n\r\n" + para2
+        segmenter = PassageSegmenter(window_words=100, overlap_words=30, min_words=5, split_paragraphs=True)
+        passages = segmenter.segment_text(full_doc)
+
+        self.assertEqual(len(passages), 2)
+        self.assertEqual(passages[0]["text"], para1)
+        self.assertEqual(passages[1]["text"], para2)
+        self.assertEqual(full_doc[passages[0]["start_char"]:passages[0]["end_char"]], para1)
+        self.assertEqual(full_doc[passages[1]["start_char"]:passages[1]["end_char"]], para2)
 
 if __name__ == "__main__":
     unittest.main()
