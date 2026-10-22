@@ -85,7 +85,7 @@ def align_passage_to_candidate(query_text: str, candidate_text: str) -> Tuple[in
         suffix = "..." if len(candidate_text) > 300 else ""
         return 0, min(len(candidate_text), 400), f"{snippet}{suffix}", False
 
-    for n in (5, 4, 3, 2):
+    for n in (5, 4, 3):
         if len(q_words) >= n:
             q_ngrams = set(tuple(q_words[i:i+n]) for i in range(len(q_words) - n + 1))
             matching_indices = [j for j in range(len(c_words) - n + 1) if tuple(c_words[j:j+n]) in q_ngrams]
@@ -321,10 +321,10 @@ class PassagePlagiarismDetector:
                 prob = float(self.classifier.predict(feat_scaled)[0])
 
             has_textual_evidence = (
-                meta["trigram_jaccard"] > 0.0 or
-                meta["bigram_jaccard"] >= 0.01 or
-                meta["dense_score"] >= 0.35 or
-                meta["word_jaccard"] >= 0.12
+                meta["trigram_jaccard"] >= 0.01 or
+                meta["bigram_jaccard"] >= 0.03 or
+                (meta["dense_score"] >= 0.50 and meta["word_jaccard"] >= 0.12) or
+                meta["word_jaccard"] >= 0.15
             )
             is_match = (prob >= self.confidence_threshold) and has_textual_evidence
 

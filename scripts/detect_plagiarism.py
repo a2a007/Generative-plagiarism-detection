@@ -17,111 +17,119 @@ from src.classification.passage_detector import PassagePlagiarismDetector, extra
 
 logger = setup_logger("PlagiarismDetector")
 
-def format_multi_source_markdown(report: dict, debug: bool = False) -> str:
+def format_compact_terminal_report(report: dict) -> str:
+    """
+    Formats detection results into a clean, compact terminal report.
+    Displays every confirmed matched passage grouped by source document without overflowing.
+    """
+    confirmed = report.get("confirmed_detected_sources", [])
+
+    # Sort confirmed sources by their first appearance in the input document
+    sorted_sources = sorted(
+        confirmed,
+        key=lambda s: min(h["input_passage_offsets"][0] for h in s.get("matching_passage_details", []))
+        if s.get("matching_passage_details") else 0
+    )
+
+    total_sources = len(sorted_sources)
+    total_passages = sum(len(src.get("matching_passage_details", [])) for src in sorted_sources)
+
+    verdict = "PLAGIARISM DETECTED" if total_passages > 0 else "NO PLAGIARISM DETECTED"
+
     lines = [
-        "=" * 70,
-        "PASSAGE-LEVEL MULTI-SOURCE PLAGIARISM DETECTION ANALYSIS REPORT",
-        "=" * 70,
-        f"Input Document               : {report['input_document_name']}",
-        f"Character Length             : {report['input_text_length_chars']:,} chars",
-        f"Word Count                   : {report['input_text_word_count']:,} words",
-        f"Total Evaluated Windows      : {report.get('total_evaluated_windows', report['total_passages_evaluated'])} windows",
-        f"Confirmed Window Detections  : {report.get('confirmed_passage_detections', len(report['confirmed_detected_sources']))} detections",
-        f"Merged Non-Overlapping Spans : {report.get('merged_input_regions_count', len(report['confirmed_detected_sources']))} regions",
-        f"Unique Confirmed Sources     : {report.get('unique_source_documents_count', report['detected_sources_count'])} sources",
-        f"Overall Verdict              : {report['overall_verdict']}",
-        "-" * 70,
-        f"CONFIRMED PLAGIARISM SOURCES ({report.get('unique_source_documents_count', report['detected_sources_count'])}):",
-        "-" * 70
+        "=" * 60,
+        "PLAGIARISM DETECTION REPORT",
+        "=" * 60,
+        f"Input File       : {report.get('input_document_name', 'Unknown')}",
+        f"Overall Verdict  : {verdict}",
+        f"Sources Detected : {total_sources}",
+        f"Passages Detected: {total_passages}",
+        "=" * 60
     ]
 
-    if report["detected_sources_count"] == 0:
-        lines.append("  No confirmed source document matches above threshold (0.50).")
-    else:
-        for idx, src in enumerate(report["confirmed_detected_sources"], start=1):
-            eval_win = src.get("evaluated_windows_count", report["total_passages_evaluated"])
-            conf_det = src.get("confirmed_passage_detections", src["detected_passages_count"])
-            merged_reg = src.get("merged_input_regions_count", len(src["merged_input_offsets"]))
-            align_ver = "Yes" if src.get("exact_alignment_verified", False) else "Fallback Alignment"
+    if total_passages == 0:
+        return "\n".join(lines)
 
-            lines.append(f"Source #{idx}: {src['source_document']}")
-            lines.append(f"  - Decision                 : {src['source_level_decision']}")
-            lines.append(f"  - Peak Confidence          : {src['highest_passage_confidence'] * 100:.2f}% (Tree Ensemble Vote)")
-            lines.append(f"  - Evaluated Windows        : {eval_win} windows")
-            lines.append(f"  - Confirmed Detections     : {conf_det} window detections")
-            lines.append(f"  - Merged Input Regions     : {merged_reg} continuous region(s)")
-            lines.append(f"  - Input Char Spans         : {src['merged_input_offsets']}")
-            lines.append(f"  - Source Char Spans        : {src['merged_source_offsets']}")
-            lines.append(f"  - Exact Alignment Verified : {align_ver}")
-            lines.append(f"  - Best BM25 Score          : {src['best_bm25_score']}")
-            lines.append(f"  - Dense Similarity         : {src['best_dense_similarity']}")
-            lines.append(f"  - Best RRF Score           : {src['best_rrf_score']}")
-            lines.append(f"  - Aligned Snippet:\n    \"{src['representative_snippet']}\"")
-            lines.append("-" * 70)
+    for idx, src in enumerate(sorted_sources, start=1):
+        src_name = src.get("source_document", f"Source {idx}")
+        hits = src.get("matching_passage_details", [])
 
-    # Optional debug section showing comprehensive per-passage feature vectors & retrieval diagnostics
-    if debug and "all_passage_evaluations" in report:
+        # Sort hits in document order by input passage start offset
+        sorted_hits = sorted(hits, key=lambda h: h.get("input_passage_offsets", [0])[0])
+
         lines.append("")
-        lines.append("=" * 70)
-        lines.append("DIAGNOSTIC LOGGING: PER-PASSAGE RETRIEVAL & CLASSIFICATION")
-        lines.append("=" * 70)
-        # Group by passage_id
-        passages_dict: Dict[str, List[dict]] = {}
-        for ev in report["all_passage_evaluations"]:
-            pid = ev["passage_id"]
-            if pid not in passages_dict:
-                passages_dict[pid] = []
-            passages_dict[pid].append(ev)
-
-        for pid, ev_list in passages_dict.items():
-            first_ev = ev_list[0]
-            in_offsets = first_ev["input_passage_offsets"]
-            w_count = first_ev["passage_word_count"]
-            in_len = in_offsets[1] - in_offsets[0]
-            snippet_preview = first_ev.get("input_passage_text", "").strip()[:100].replace("\n", " ")
-
-            lines.append(f"Passage: {pid}")
-            lines.append(f"  - Input Character Offsets : [{in_offsets[0]}, {in_offsets[1]}] ({in_len} chars)")
-            lines.append(f"  - Word Count              : {w_count} words")
-            lines.append(f"  - Passage Snippet         : \"{snippet_preview}...\"")
-            lines.append(f"  - Retrieved Candidates ({len(ev_list)} evaluated):")
-
-            for rank_idx, ev in enumerate(ev_list, start=1):
-                db = ev.get("debug_features", {})
-                b_rank = ev.get("bm25_rank", db.get("bm25_rank", "N/A"))
-                d_rank = ev.get("dense_rank", db.get("dense_rank", "N/A"))
-                f_rank = ev.get("fused_rank", db.get("fused_rank", rank_idx))
-                evidence_status = "CONFIRMED" if db.get("has_textual_evidence") else "NONE"
-
-                lines.append(f"    Candidate #{rank_idx}: {ev['source_document']}")
-                lines.append(f"      * Decision        : {ev['plagiarism_decision']} (Probability: {ev['confidence_score']*100:.2f}%)")
-                lines.append(f"      * Retrieval Ranks : Fused Rank: {f_rank} | BM25 Rank: {b_rank} | Dense Rank: {d_rank}")
-                lines.append(f"      * Textual Evidence: {evidence_status}")
-
-                if "feature_names" in db and "unscaled" in db and "scaled" in db:
-                    lines.append("      * 10 Classifier Features (Raw vs Scaled):")
-                    for i, (fname, raw_v, scl_v) in enumerate(zip(db["feature_names"], db["unscaled"], db["scaled"]), start=1):
-                        lines.append(f"          {i:2d}. {fname:<24}: raw={raw_v:<10} | scaled={scl_v:<10}")
-                lines.append("      " + "-" * 40)
-            lines.append("-" * 70)
-
-    # Top non-matching candidate sources retrieved
-    non_matches = report.get("retrieved_non_matching_sources", [])
-    if non_matches:
+        lines.append(f"SOURCE {idx}: {src_name}")
+        lines.append("-" * 60)
+        lines.append(f"Passages Detected: {len(sorted_hits)}")
         lines.append("")
-        lines.append(f"TOP RETRIEVED NON-MATCHING SOURCES ({len(non_matches[:3])} of {len(non_matches)} shown):")
-        lines.append("-" * 70)
-        for idx, nm in enumerate(non_matches[:3], start=1):
-            lines.append(f"Candidate #{idx}: {nm['source_document']}")
-            lines.append(f"  - Decision           : {nm['source_level_decision']}")
-            lines.append(f"  - Peak Confidence    : {nm['highest_passage_confidence'] * 100:.2f}%")
-            lines.append(f"  - Best BM25 Score    : {nm['best_bm25_score']}")
-            lines.append(f"  - Dense Similarity   : {nm['best_dense_similarity']}")
-            lines.append(f"  - Best RRF Score     : {nm['best_rrf_score']}")
-            lines.append("-" * 70)
 
-    lines.append("=" * 70)
+        for p_idx, ev in enumerate(sorted_hits, start=1):
+            pid = ev.get("passage_id", f"passage_{p_idx:04d}")
+            conf = ev.get("confidence_score", 0.0)
+            conf_str = f"{round(conf * 100)}%"
+
+            in_offsets = ev.get("input_passage_offsets", [0, 0])
+            in_loc = f"Characters {in_offsets[0]}-{in_offsets[1]}"
+
+            src_offsets = ev.get("source_passage_offsets")
+            if (
+                src_offsets
+                and len(src_offsets) == 2
+                and src_offsets[0] is not None
+                and src_offsets[1] is not None
+                and (src_offsets[0] > 0 or src_offsets[1] > 0)
+            ):
+                src_loc = f"Characters {src_offsets[0]}-{src_offsets[1]}"
+            else:
+                src_loc = "Not available"
+
+            raw_text = ev.get("input_passage_text", "").strip()
+            if not raw_text:
+                raw_text = ev.get("matched_source_snippet", "").strip()
+            raw_text = re.sub(r'\s+', ' ', raw_text)
+            if len(raw_text) > 150:
+                preview = raw_text[:150].strip() + "..."
+            else:
+                preview = raw_text
+
+            p_prefix = f"[{p_idx}] Passage ID"
+            lines.append(f"{p_prefix:<20} : {pid}")
+            lines.append(f"{'    Confidence':<20} : {conf_str}")
+            lines.append(f"{'    Input Location':<20} : {in_loc}")
+            lines.append(f"{'    Matched Source':<20} : {src_name}")
+            lines.append(f"{'    Source Location':<20} : {src_loc}")
+            lines.append(f"{'    Matched Text':<20} : {preview}")
+            lines.append("")
+
+    lines.append("=" * 60)
     return "\n".join(lines)
+
+
+# Alias for backward compatibility
+format_multi_source_markdown = format_compact_terminal_report
+
+
+def format_verbose_diagnostics(report: dict) -> str:
+    """Formats optional deep diagnostic logs when --verbose or --debug-features is specified."""
+    lines = [
+        "",
+        "=" * 60,
+        "VERBOSE DIAGNOSTICS: CANDIDATE FEATURE VECTORS & PROBABILITIES",
+        "=" * 60
+    ]
+    for ev in report.get("all_passage_evaluations", []):
+        if "debug_features" in ev:
+            db = ev["debug_features"]
+            lines.append(f"Passage: {ev['passage_id']} -> Candidate: {ev['source_document']}")
+            lines.append(f"  - Decision: {ev['plagiarism_decision']} (Probability: {ev['confidence_score']*100:.2f}%)")
+            lines.append(f"  - Model: {db.get('model_type')} | Classes: {db.get('classes')}")
+            lines.append("  - 10 Classifier Features:")
+            for fname, raw_v, scl_v in zip(db.get("feature_names", []), db.get("unscaled", []), db.get("scaled", [])):
+                lines.append(f"      {fname:<24}: raw={raw_v:<10} | scaled={scl_v:<10}")
+            lines.append("-" * 40)
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run Passage-Level Multi-Source Plagiarism Detection")
@@ -135,12 +143,24 @@ def main():
     parser.add_argument("--min-words", type=int, default=5, help="Minimum words required for an evaluated passage (default: 5)")
     parser.add_argument("--no-split-paragraphs", action="store_true", help="Disable paragraph-aware segmentation")
     parser.add_argument("--output-report", type=str, help="Save report to JSON file path")
-    parser.add_argument("--debug-features", action="store_true", help="Print unscaled and scaled feature vectors and model probabilities")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose diagnostic logging (equivalent to --debug-features)")
+    parser.add_argument("--debug-features", action="store_true", help="Include feature vector debugging in report and display verbose diagnostics")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose diagnostic logging")
     args = parser.parse_args()
 
     config = load_config(args.config)
     is_debug = args.debug_features or args.verbose
+
+    # Silence background info logs unless verbose mode is explicitly enabled
+    if not is_debug:
+        import logging as py_logging
+        for log_name in ["PAN11_Pipeline", "PlagiarismDetector", "PassagePlagiarismDetector", "BM25Retriever", "DenseRetriever", "CandidateFusion"]:
+            py_logging.getLogger(log_name).setLevel(py_logging.WARNING)
+        try:
+            from transformers.utils import logging as tf_logging
+            tf_logging.set_verbosity_error()
+        except Exception:
+            pass
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     if args.input:
         input_path = Path(args.input)
@@ -177,8 +197,13 @@ def main():
         debug=is_debug
     )
 
-    md_output = format_multi_source_markdown(report, debug=is_debug)
-    logger.info("\n" + md_output)
+    # Print clean compact terminal report
+    compact_output = format_compact_terminal_report(report)
+    print("\n" + compact_output)
+
+    if is_debug:
+        verbose_output = format_verbose_diagnostics(report)
+        print("\n" + verbose_output)
 
     if args.output_report:
         out_path = Path(args.output_report)
@@ -194,7 +219,8 @@ def main():
 
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, default=json_encoder)
-        logger.info(f"Saved detection report to: {out_path}")
+        if is_debug:
+            logger.info(f"Saved detection report to: {out_path}")
 
 if __name__ == "__main__":
     main()
