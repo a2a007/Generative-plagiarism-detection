@@ -1,0 +1,5 @@
+Modern deep learning systems rely on gradient descent to optimize parameters across many training epochs. In neural language modeling, attention mechanisms compute pairwise similarities between query and key projections.
+
+The most famous and acute physicians of the insane estimate that eighty out of a hundred insane persons are subject to hallucinations. The morbid condition which generates them is also produced by debility, by anemia, and the senile decay of the cerebral organs, since they occur in dementia, idiocy, and old age, and the physiological and mental causes are the same; the power of fixing the attention and governing the thoughts is diminished, owing to the weakening of the vivid consciousness of the external world.
+
+Furthermore, tensor processing units accelerate matrix multiplications through systolic array architectures in high-performance computing centers.

@@ -1,4 +1,4 @@
-System,Recall@1,Recall@5,Recall@10,Recall@20,MRR
+﻿System,Recall@1,Recall@5,Recall@10,Recall@20,MRR
 BM25,0.99,1.0,1.0,1.0,0.995
 Dense,0.0,0.0,0.0,0.0,0.0
-Fusion,0.07,0.96,1.0,1.0,0.3852738095238095
+Fusion,0.07,0.96,1.0,1.0,0.3852740000000000
